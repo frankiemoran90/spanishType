@@ -1,0 +1,11 @@
+name = "spanish-type-worker"
+main = "src/index.ts"
+compatibility_date = "2024-05-01"
+
+# TODO: update with your actual production route and account ID.
+# routes = [{ pattern = "spanishtype.example.com/api/*", zone_id = "" }]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "spanish_type"
+database_id = "TODO_REPLACE_WITH_D1_ID"

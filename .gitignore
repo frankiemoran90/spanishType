@@ -1,0 +1,11 @@
+node_modules/
+.wrangler/
+dist/
+build/
+.svelte-kit/
+.vercel/
+.DS_Store
+.env
+
+# Generated data dumps
+/data/cache/
