@@ -138,17 +138,14 @@ document.addEventListener('DOMContentLoaded', () => {
   spanishDisplay.style.color = '#9ca3af';
   spanishContainer.appendChild(spanishDisplay);
 
-  const cursor = document.createElement('span');
-  cursor.textContent = '';
-  cursor.style.display = 'inline-block';
+  const cursor = document.createElement('div');
+  cursor.style.position = 'absolute';
   cursor.style.width = '2px';
   cursor.style.background = '#2563eb';
-  cursor.style.margin = '0 0 -4px 0';
-  cursor.style.height = '1.5rem';
-  cursor.style.position = 'relative';
-  cursor.style.top = '0.2rem';
+  cursor.style.height = '1.8rem';
   cursor.style.animation = 'blink 1s steps(2, start) infinite';
-  cursor.style.verticalAlign = 'baseline';
+  cursor.style.pointerEvents = 'none';
+  spanishContainer.appendChild(cursor);
 
   const styleTag = document.createElement('style');
   styleTag.textContent = '@keyframes blink { to { visibility: hidden; } }';
@@ -427,15 +424,36 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   const updateCursor = () => {
-    if (!spanishDisplay.contains(cursor)) {
-      spanishDisplay.appendChild(cursor);
-    }
-    const nextNode = charSpans[currentIndex] ?? null;
-    if (nextNode) {
-      spanishDisplay.insertBefore(cursor, nextNode);
-    } else {
-      spanishDisplay.appendChild(cursor);
-    }
+    window.requestAnimationFrame(() => {
+      if (!currentSentence) {
+        cursor.style.display = 'none';
+        return;
+      }
+
+      cursor.style.display = 'block';
+
+      const containerRect = spanishContainer.getBoundingClientRect();
+      let targetRect = null;
+
+      if (currentIndex < charSpans.length) {
+        targetRect = charSpans[currentIndex].getBoundingClientRect();
+        const left = Math.max(0, targetRect.left - containerRect.left - 2);
+        cursor.style.left = `${left}px`;
+        cursor.style.top = `${targetRect.top - containerRect.top}px`;
+        cursor.style.height = `${targetRect.height || 24}px`;
+      } else if (charSpans.length > 0) {
+        const lastSpan = charSpans[charSpans.length - 1];
+        const lastRect = lastSpan.getBoundingClientRect();
+        cursor.style.left = `${lastRect.right - containerRect.left}px`;
+        cursor.style.top = `${lastRect.top - containerRect.top}px`;
+        cursor.style.height = `${lastRect.height || 24}px`;
+      } else {
+        const displayRect = spanishDisplay.getBoundingClientRect();
+        cursor.style.left = `${Math.max(0, displayRect.left - containerRect.left)}px`;
+        cursor.style.top = `${displayRect.top - containerRect.top}px`;
+        cursor.style.height = `${displayRect.height || 24}px`;
+      }
+    });
   };
 
   const buildSpanishDisplay = (sentence) => {
