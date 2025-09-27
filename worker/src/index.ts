@@ -2,6 +2,7 @@ interface D1PreparedStatement {
   bind(...values: unknown[]): D1PreparedStatement;
   first<T>(): Promise<T | null>;
   all<T>(): Promise<{ results: T[] }>;
+  run<T>(): Promise<T>;
 }
 
 interface D1Database {
@@ -17,6 +18,12 @@ interface SentenceRow {
   updated_at?: string;
 }
 
+interface LeaderboardRow {
+  player_name: string;
+  score: number;
+  updated_at?: string;
+}
+
 interface Env {
   DB: D1Database;
   // Add secrets like API tokens here (e.g., TATOEBA_API_TOKEN: string)
@@ -29,6 +36,16 @@ const json = (payload: unknown, init?: ResponseInit): Response => {
     ...init,
   });
 };
+
+async function readJson<T>(request: Request): Promise<T | null> {
+  try {
+    const text = await request.text();
+    if (!text) return null;
+    return JSON.parse(text) as T;
+  } catch (_error) {
+    return null;
+  }
+}
 
 const notFound = () => new Response('Not found', { status: 404 });
 
@@ -86,6 +103,95 @@ async function getRandomSentence(env: Env, excludeIds: number[]): Promise<Respon
   }
 }
 
+async function getLeaderboard(env: Env, limit: number): Promise<Response> {
+  try {
+    const safeLimit = Math.min(Math.max(limit, 1), 25);
+    const { results } = await env.DB.prepare(
+      `SELECT player_name, score, updated_at
+       FROM leaderboard
+       ORDER BY score DESC, updated_at ASC
+       LIMIT ?`
+    )
+      .bind(safeLimit)
+      .all<LeaderboardRow>();
+
+    const entries = (results ?? []).map((row) => ({
+      playerName: row.player_name,
+      score: row.score,
+      updatedAt: row.updated_at,
+    }));
+
+    return json({ entries });
+  } catch (error) {
+    return json(
+      {
+        error: 'leaderboard_query_failed',
+        message: 'Unable to read leaderboard standings.',
+        details: error instanceof Error ? error.message : String(error),
+      },
+      { status: 500 }
+    );
+  }
+}
+
+async function submitLeaderboardScore(env: Env, request: Request): Promise<Response> {
+  try {
+    const payload = await readJson<{ name?: string; score?: number }>(request);
+    const name = payload?.name?.trim();
+    const score = typeof payload?.score === 'number' ? Math.round(payload.score) : NaN;
+
+    if (!name || name.length === 0 || name.length > 64) {
+      return json(
+        { error: 'invalid_name', message: 'Player name must be between 1 and 64 characters.' },
+        { status: 400 }
+      );
+    }
+
+    if (!Number.isFinite(score) || score < 0) {
+      return json(
+        { error: 'invalid_score', message: 'Score must be a non-negative integer.' },
+        { status: 400 }
+      );
+    }
+
+    await env.DB.prepare(
+      `INSERT INTO leaderboard (player_name, score, updated_at)
+       VALUES (?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(player_name) DO UPDATE SET
+         score = CASE WHEN excluded.score > leaderboard.score THEN excluded.score ELSE leaderboard.score END,
+         updated_at = CURRENT_TIMESTAMP`
+    )
+      .bind(name, score)
+      .run();
+
+    const updated = await env.DB.prepare(
+      `SELECT player_name, score, updated_at FROM leaderboard WHERE player_name = ?`
+    )
+      .bind(name)
+      .first<LeaderboardRow>();
+
+    return json({
+      ok: true,
+      entry: updated
+        ? {
+            playerName: updated.player_name,
+            score: updated.score,
+            updatedAt: updated.updated_at,
+          }
+        : null,
+    });
+  } catch (error) {
+    return json(
+      {
+        error: 'leaderboard_update_failed',
+        message: 'Unable to update leaderboard.',
+        details: error instanceof Error ? error.message : String(error),
+      },
+      { status: 500 }
+    );
+  }
+}
+
 function handleOptions(): Response {
   return new Response(null, {
     status: 204,
@@ -116,6 +222,18 @@ export default {
         }
         return withCors(await getRandomSentence(env, parseExcludeQuery(url.searchParams)));
 
+      case '/api/leaderboard/top':
+        if (request.method !== 'GET') {
+          return methodNotAllowed();
+        }
+        return withCors(await getLeaderboard(env, parseLimit(url.searchParams.get('limit'))));
+
+      case '/api/leaderboard/submit':
+        if (request.method !== 'POST') {
+          return methodNotAllowed();
+        }
+        return withCors(await submitLeaderboardScore(env, request));
+
       default:
         return notFound();
     }
@@ -125,13 +243,22 @@ export default {
 function withCors(response: Response): Response {
   const headers = new Headers(response.headers);
   headers.set('access-control-allow-origin', '*');
-  headers.set('access-control-allow-methods', 'GET, OPTIONS');
+  headers.set('access-control-allow-methods', 'GET, POST, OPTIONS');
   headers.set('access-control-allow-headers', 'Content-Type, Authorization');
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
     headers,
   });
+}
+
+function parseLimit(value: string | null): number {
+  if (!value) return 10;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 10;
+  }
+  return parsed;
 }
 
 function parseExcludeQuery(params: URLSearchParams): number[] {

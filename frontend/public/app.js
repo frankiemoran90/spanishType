@@ -38,6 +38,17 @@ document.addEventListener('DOMContentLoaded', () => {
     localStorage.setItem('spanishType.sessionScore', String(score));
   };
 
+  const loadPersonalBest = () => {
+    const stored = localStorage.getItem('spanishType.personalBest');
+    if (!stored) return 0;
+    const value = Number.parseInt(stored, 10);
+    return Number.isNaN(value) ? 0 : value;
+  };
+
+  const savePersonalBest = (score) => {
+    localStorage.setItem('spanishType.personalBest', String(score));
+  };
+
   root.innerHTML = '';
   root.style.fontFamily = 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
   root.style.maxWidth = '860px';
@@ -110,6 +121,9 @@ document.addEventListener('DOMContentLoaded', () => {
   spanishContainer.style.borderRadius = '0.5rem';
   spanishContainer.style.background = '#f9fafb';
   spanishContainer.style.minHeight = '84px';
+  spanishContainer.style.maxHeight = '260px';
+  spanishContainer.style.overflowY = 'auto';
+  spanishContainer.style.overflowX = 'hidden';
   spanishContainer.style.cursor = 'text';
   spanishContainer.tabIndex = 0;
   spanishContainer.style.outline = 'none';
@@ -119,6 +133,8 @@ document.addEventListener('DOMContentLoaded', () => {
   spanishDisplay.style.fontSize = '1.35rem';
   spanishDisplay.style.lineHeight = '2rem';
   spanishDisplay.style.whiteSpace = 'pre-wrap';
+  spanishDisplay.style.wordBreak = 'break-word';
+  spanishDisplay.style.overflowWrap = 'anywhere';
   spanishDisplay.style.color = '#9ca3af';
   spanishContainer.appendChild(spanishDisplay);
 
@@ -129,9 +145,10 @@ document.addEventListener('DOMContentLoaded', () => {
   cursor.style.background = '#2563eb';
   cursor.style.margin = '0 0 -4px 0';
   cursor.style.height = '1.5rem';
-  cursor.style.verticalAlign = 'baseline';
-  cursor.style.animation = 'blink 1s steps(2, start) infinite';
   cursor.style.position = 'relative';
+  cursor.style.top = '0.2rem';
+  cursor.style.animation = 'blink 1s steps(2, start) infinite';
+  cursor.style.verticalAlign = 'baseline';
 
   const styleTag = document.createElement('style');
   styleTag.textContent = '@keyframes blink { to { visibility: hidden; } }';
@@ -230,6 +247,25 @@ document.addEventListener('DOMContentLoaded', () => {
   scoreValueEl.style.color = sessionScore >= 0 ? '#047857' : '#b91c1c';
   playerRow.appendChild(scoreValueEl);
 
+  const bestRow = document.createElement('div');
+  bestRow.style.display = 'flex';
+  bestRow.style.justifyContent = 'space-between';
+  bestRow.style.alignItems = 'center';
+  bestRow.style.marginBottom = '0.75rem';
+  sidebar.appendChild(bestRow);
+
+  const bestLabel = document.createElement('span');
+  bestLabel.textContent = 'Personal best';
+  bestLabel.style.color = '#4b5563';
+  bestLabel.style.fontSize = '0.9rem';
+  bestRow.appendChild(bestLabel);
+
+  const personalBestValueEl = document.createElement('span');
+  personalBestValueEl.style.fontVariantNumeric = 'tabular-nums';
+  personalBestValueEl.style.fontSize = '0.9rem';
+  personalBestValueEl.style.color = '#1f2937';
+  bestRow.appendChild(personalBestValueEl);
+
   const resetButton = document.createElement('button');
   resetButton.type = 'button';
   resetButton.textContent = 'Reset score';
@@ -249,6 +285,28 @@ document.addEventListener('DOMContentLoaded', () => {
   tip.style.marginBottom = '0';
   sidebar.appendChild(tip);
 
+  const leaderboardHeading = document.createElement('h4');
+  leaderboardHeading.textContent = 'Leaderboard';
+  leaderboardHeading.style.margin = '1rem 0 0.5rem 0';
+  leaderboardHeading.style.fontSize = '0.95rem';
+  leaderboardHeading.style.color = '#111827';
+  sidebar.appendChild(leaderboardHeading);
+
+  const leaderboardStatus = document.createElement('p');
+  leaderboardStatus.style.fontSize = '0.8rem';
+  leaderboardStatus.style.color = '#6b7280';
+  leaderboardStatus.style.margin = '0 0 0.5rem 0';
+  leaderboardStatus.textContent = 'Fetching leaderboard…';
+  sidebar.appendChild(leaderboardStatus);
+
+  const leaderboardList = document.createElement('ol');
+  leaderboardList.style.paddingLeft = '1.25rem';
+  leaderboardList.style.margin = '0';
+  leaderboardList.style.display = 'flex';
+  leaderboardList.style.flexDirection = 'column';
+  leaderboardList.style.gap = '0.35rem';
+  sidebar.appendChild(leaderboardList);
+
   let currentSentence = null;
   let charSpans = [];
   let charStates = [];
@@ -257,6 +315,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let enforceAccents = true;
   let hasScoredCurrent = false;
   const usedSentenceIds = new Set();
+  let personalBest = loadPersonalBest();
 
   const colors = {
     pending: '#9ca3af',
@@ -264,11 +323,88 @@ document.addEventListener('DOMContentLoaded', () => {
     incorrect: '#b91c1c',
   };
 
+  const renderLeaderboard = (entries) => {
+    leaderboardList.innerHTML = '';
+
+    if (!Array.isArray(entries) || entries.length === 0) {
+      leaderboardStatus.textContent = 'No scores yet. Be the first to submit!';
+      return;
+    }
+
+    leaderboardStatus.textContent = '';
+
+    entries.forEach((entry, index) => {
+      const item = document.createElement('li');
+      item.style.display = 'flex';
+      item.style.justifyContent = 'space-between';
+      item.style.fontSize = '0.85rem';
+      item.style.color = '#1f2937';
+      item.style.fontVariantNumeric = 'tabular-nums';
+
+      const name = document.createElement('span');
+      name.textContent = entry.playerName ?? entry.player_name ?? 'Unknown';
+      name.style.fontWeight = index === 0 ? '600' : '500';
+
+      const score = document.createElement('span');
+      score.textContent = `${entry.score ?? 0} pts`;
+      score.style.color = '#047857';
+
+      item.appendChild(name);
+      item.appendChild(score);
+      leaderboardList.appendChild(item);
+    });
+  };
+
+  const refreshLeaderboard = async () => {
+    try {
+      leaderboardStatus.textContent = leaderboardStatus.textContent || 'Fetching leaderboard…';
+      const response = await fetch(`${apiBase}/api/leaderboard/top?limit=10`, {
+        headers: { accept: 'application/json' },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Leaderboard request failed (${response.status})`);
+      }
+
+      const payload = await response.json();
+      renderLeaderboard(payload.entries ?? []);
+    } catch (error) {
+      console.error('Failed to load leaderboard', error);
+      leaderboardStatus.textContent = 'Unable to load leaderboard right now.';
+    }
+  };
+
+  const submitLeaderboardScore = async (score) => {
+    if (!playerName || !Number.isFinite(score) || score <= 0) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`${apiBase}/api/leaderboard/submit`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: playerName, score }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Submit failed (${response.status})`);
+      }
+
+      await refreshLeaderboard();
+    } catch (error) {
+      console.error('Failed to submit score', error);
+    }
+  };
+
   const updateScoreDisplay = () => {
     scoreValueEl.textContent = `${sessionScore} pts`;
     scoreValueEl.style.color = sessionScore >= 0 ? '#047857' : '#b91c1c';
   };
+  const updatePersonalBestDisplay = () => {
+    personalBestValueEl.textContent = `${personalBest} pts`;
+  };
   updateScoreDisplay();
+  updatePersonalBestDisplay();
 
   const setLoading = (loading) => {
     isLoading = loading;
@@ -426,6 +562,13 @@ document.addEventListener('DOMContentLoaded', () => {
     updateScoreDisplay();
     hasScoredCurrent = true;
 
+    if (sessionScore > personalBest) {
+      personalBest = sessionScore;
+      savePersonalBest(personalBest);
+      updatePersonalBestDisplay();
+      submitLeaderboardScore(personalBest);
+    }
+
     if (incorrect === 0) {
       feedback.textContent = `✅ Perfect! +${sentenceScore} pts.`;
       feedback.style.color = '#047857';
@@ -548,4 +691,15 @@ document.addEventListener('DOMContentLoaded', () => {
   fetchSentence().catch((error) => {
     console.error('Failed to fetch initial sentence', error);
   });
+
+  refreshLeaderboard().finally(() => {
+    if (personalBest > 0) {
+      submitLeaderboardScore(personalBest);
+    }
+  });
+
+  const LEADERBOARD_REFRESH_MS = 30000;
+  setInterval(() => {
+    refreshLeaderboard();
+  }, LEADERBOARD_REFRESH_MS);
 });
