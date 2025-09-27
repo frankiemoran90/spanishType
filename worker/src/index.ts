@@ -34,14 +34,29 @@ const notFound = () => new Response('Not found', { status: 404 });
 
 const methodNotAllowed = () => new Response('Method not allowed', { status: 405 });
 
-async function getRandomSentence(env: Env): Promise<Response> {
+async function getRandomSentence(env: Env, excludeIds: number[]): Promise<Response> {
   try {
-    const row = await env.DB.prepare(
-      `SELECT id, spanish, english, source, difficulty, updated_at
-       FROM sentences
-       ORDER BY RANDOM()
-       LIMIT 1`
-    ).first<SentenceRow>();
+    const runQuery = async (ids: number[]): Promise<SentenceRow | null> => {
+      let query = `SELECT rowid AS id, spanish, english, source, difficulty, updated_at FROM sentences`;
+
+      if (ids.length > 0) {
+        const placeholders = ids.map(() => '?').join(', ');
+        query += ` WHERE id NOT IN (${placeholders})`;
+      }
+
+      query += ` ORDER BY RANDOM() LIMIT 1`;
+
+      const statement = ids.length > 0 ? env.DB.prepare(query).bind(...ids) : env.DB.prepare(query);
+      return (await statement.first<SentenceRow>()) ?? null;
+    };
+
+    let row = await runQuery(excludeIds);
+    let reset = false;
+
+    if (!row) {
+      row = await runQuery([]);
+      reset = true;
+    }
 
     if (!row) {
       return json(
@@ -57,6 +72,7 @@ async function getRandomSentence(env: Env): Promise<Response> {
       source: row.source,
       difficulty: row.difficulty ?? 'unknown',
       updatedAt: row.updated_at,
+      reset,
     });
   } catch (error) {
     return json(
@@ -98,7 +114,7 @@ export default {
         if (request.method !== 'GET') {
           return methodNotAllowed();
         }
-        return withCors(await getRandomSentence(env));
+        return withCors(await getRandomSentence(env, parseExcludeQuery(url.searchParams)));
 
       default:
         return notFound();
@@ -116,4 +132,17 @@ function withCors(response: Response): Response {
     statusText: response.statusText,
     headers,
   });
+}
+
+function parseExcludeQuery(params: URLSearchParams): number[] {
+  const value = params.get('exclude');
+  if (!value) return [];
+
+  return value
+    .split(',')
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0)
+    .map((part) => Number.parseInt(part, 10))
+    .filter((num) => Number.isFinite(num))
+    .slice(0, 100);
 }

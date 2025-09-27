@@ -256,6 +256,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let isLoading = false;
   let enforceAccents = true;
   let hasScoredCurrent = false;
+  const usedSentenceIds = new Set();
 
   const colors = {
     pending: '#9ca3af',
@@ -443,7 +444,13 @@ document.addEventListener('DOMContentLoaded', () => {
     hasScoredCurrent = false;
 
     try {
-      const response = await fetch(`${apiBase}/api/sentences/random`, {
+      const excludeParam = Array.from(usedSentenceIds).slice(-100).join(',');
+      const requestUrl = new URL(`${apiBase}/api/sentences/random`);
+      if (excludeParam.length > 0) {
+        requestUrl.searchParams.set('exclude', excludeParam);
+      }
+
+      const response = await fetch(requestUrl.toString(), {
         headers: { accept: 'application/json' },
       });
 
@@ -452,14 +459,25 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       const payload = await response.json();
+
+      if (payload.reset) {
+        usedSentenceIds.clear();
+      }
+
+      if (payload.id && typeof payload.id === 'number') {
+        usedSentenceIds.add(payload.id);
+      }
+
       currentSentence = payload;
       englishBlock.textContent = payload.english;
       const meta = [`ID: ${payload.id}`];
       if (payload.difficulty) meta.push(`Difficulty: ${payload.difficulty}`);
       status.textContent = meta.join(' • ');
       buildSpanishDisplay(payload.spanish);
-      feedback.textContent = 'Start typing the Spanish sentence.';
-      feedback.style.color = '#1f2937';
+      feedback.textContent = payload.reset
+        ? 'You have seen every sentence available. Starting a fresh cycle!'
+        : 'Start typing the Spanish sentence.';
+      feedback.style.color = payload.reset ? '#2563eb' : '#1f2937';
       spanishContainer.focus({ preventScroll: true });
     } catch (error) {
       currentSentence = null;
@@ -523,6 +541,8 @@ document.addEventListener('DOMContentLoaded', () => {
     updateScoreDisplay();
     feedback.textContent = 'Score reset for this session.';
     feedback.style.color = '#2563eb';
+    usedSentenceIds.clear();
+    hasScoredCurrent = false;
   });
 
   fetchSentence().catch((error) => {
