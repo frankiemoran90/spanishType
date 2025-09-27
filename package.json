@@ -1,0 +1,14 @@
+{
+  "name": "spanish-type",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "ingest": "tsx scripts/ingest-tatoeba.ts"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240405",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0"
+  }
+}
