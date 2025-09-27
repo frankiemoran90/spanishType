@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "migrations": [
+    { "name": "0001_init" }
+  ]
+}
