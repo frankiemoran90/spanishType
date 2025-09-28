@@ -145,7 +145,25 @@ document.addEventListener('DOMContentLoaded', () => {
   cursor.style.height = '1.8rem';
   cursor.style.animation = 'blink 1s steps(2, start) infinite';
   cursor.style.pointerEvents = 'none';
+  cursor.style.display = 'none';
   spanishContainer.appendChild(cursor);
+
+  const hiddenInput = document.createElement('input');
+  hiddenInput.type = 'text';
+  hiddenInput.autocomplete = 'off';
+  hiddenInput.autocapitalize = 'none';
+  hiddenInput.autocorrect = 'off';
+  hiddenInput.spellcheck = false;
+  hiddenInput.setAttribute('aria-hidden', 'true');
+  hiddenInput.style.position = 'absolute';
+  hiddenInput.style.opacity = '0';
+  hiddenInput.style.pointerEvents = 'none';
+  hiddenInput.style.width = '1px';
+  hiddenInput.style.height = '1px';
+  hiddenInput.style.bottom = '0';
+  hiddenInput.style.left = '0';
+  hiddenInput.style.fontSize = '16px';
+  spanishContainer.appendChild(hiddenInput);
 
   const styleTag = document.createElement('style');
   styleTag.textContent = '@keyframes blink { to { visibility: hidden; } }';
@@ -313,11 +331,17 @@ document.addEventListener('DOMContentLoaded', () => {
   let hasScoredCurrent = false;
   const usedSentenceIds = new Set();
   let personalBest = loadPersonalBest();
+  let handledBackspaceViaBeforeInput = false;
 
   const colors = {
     pending: '#9ca3af',
     correct: '#111827',
     incorrect: '#b91c1c',
+  };
+
+  const focusHiddenInput = () => {
+    hiddenInput.value = '';
+    hiddenInput.focus({ preventScroll: true });
   };
 
   const renderLeaderboard = (entries) => {
@@ -453,6 +477,19 @@ document.addEventListener('DOMContentLoaded', () => {
         cursor.style.top = `${displayRect.top - containerRect.top}px`;
         cursor.style.height = `${displayRect.height || 24}px`;
       }
+
+      const cursorTop = parseFloat(cursor.style.top);
+      if (!Number.isNaN(cursorTop)) {
+        const cursorBottom = cursorTop + cursor.offsetHeight;
+        const visibleTop = spanishContainer.scrollTop;
+        const visibleBottom = visibleTop + spanishContainer.clientHeight;
+
+        if (cursorTop < visibleTop) {
+          spanishContainer.scrollTop = cursorTop;
+        } else if (cursorBottom > visibleBottom) {
+          spanishContainer.scrollTop = cursorBottom - spanishContainer.clientHeight + 8;
+        }
+      }
     });
   };
 
@@ -515,10 +552,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const handleKeyDown = (event) => {
     if (!currentSentence) return;
+    const usingHiddenInput = document.activeElement === hiddenInput;
 
     if (event.key === 'Backspace') {
       event.preventDefault();
-      handleBackspace();
+      if (!usingHiddenInput || !handledBackspaceViaBeforeInput) {
+        handleBackspace();
+      }
+      handledBackspaceViaBeforeInput = false;
       return;
     }
 
@@ -537,7 +578,14 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey && !event.isComposing) {
+    if (
+      event.key.length === 1 &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !event.isComposing &&
+      !usingHiddenInput
+    ) {
       event.preventDefault();
       handleCharacter(event.key);
     }
@@ -545,7 +593,28 @@ document.addEventListener('DOMContentLoaded', () => {
 
   window.addEventListener('keydown', handleKeyDown);
   spanishContainer.addEventListener('click', () => {
-    spanishContainer.focus({ preventScroll: true });
+    focusHiddenInput();
+  });
+
+  spanishContainer.addEventListener('focus', () => {
+    focusHiddenInput();
+  });
+
+  hiddenInput.addEventListener('beforeinput', (event) => {
+    if (event.inputType === 'deleteContentBackward') {
+      event.preventDefault();
+      handleBackspace();
+      handledBackspaceViaBeforeInput = true;
+    }
+  });
+
+  hiddenInput.addEventListener('input', () => {
+    if (!hiddenInput.value) return;
+    for (const char of hiddenInput.value) {
+      handleCharacter(char);
+    }
+    hiddenInput.value = '';
+    handledBackspaceViaBeforeInput = false;
   });
 
   const evaluateAnswer = () => {
@@ -596,6 +665,8 @@ document.addEventListener('DOMContentLoaded', () => {
       feedback.style.color = '#b91c1c';
     }
 
+    focusHiddenInput();
+
     return sentenceScore;
   };
 
@@ -639,7 +710,7 @@ document.addEventListener('DOMContentLoaded', () => {
         ? 'You have seen every sentence available. Starting a fresh cycle!'
         : 'Start typing the Spanish sentence.';
       feedback.style.color = payload.reset ? '#2563eb' : '#1f2937';
-      spanishContainer.focus({ preventScroll: true });
+      focusHiddenInput();
     } catch (error) {
       currentSentence = null;
       englishBlock.textContent = '—';
@@ -694,6 +765,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       updateCursor();
     }
+    focusHiddenInput();
   });
 
   resetButton.addEventListener('click', () => {
@@ -704,6 +776,7 @@ document.addEventListener('DOMContentLoaded', () => {
     feedback.style.color = '#2563eb';
     usedSentenceIds.clear();
     hasScoredCurrent = false;
+    focusHiddenInput();
   });
 
   fetchSentence().catch((error) => {
