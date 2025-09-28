@@ -29,6 +29,15 @@ interface Env {
   // Add secrets like API tokens here (e.g., TATOEBA_API_TOKEN: string)
 }
 
+const DIFFICULTY_LABELS: Record<string, string> = {
+  easy: 'Easy',
+  medium: 'Medium',
+  hard: 'Hard',
+  impossible: 'Impossible',
+};
+
+const ALLOWED_DIFFICULTIES = new Set(Object.keys(DIFFICULTY_LABELS));
+
 const json = (payload: unknown, init?: ResponseInit): Response => {
   const body = JSON.stringify(payload, null, 2);
   return new Response(body, {
@@ -115,11 +124,7 @@ async function getLeaderboard(env: Env, limit: number): Promise<Response> {
       .bind(safeLimit)
       .all<LeaderboardRow>();
 
-    const entries = (results ?? []).map((row) => ({
-      playerName: row.player_name,
-      score: row.score,
-      updatedAt: row.updated_at,
-    }));
+    const entries = (results ?? []).map((row) => decodeLeaderboardRow(row));
 
     return json({ entries });
   } catch (error) {
@@ -136,9 +141,10 @@ async function getLeaderboard(env: Env, limit: number): Promise<Response> {
 
 async function submitLeaderboardScore(env: Env, request: Request): Promise<Response> {
   try {
-    const payload = await readJson<{ name?: string; score?: number }>(request);
+    const payload = await readJson<{ name?: string; score?: number; difficulty?: string }>(request);
     const name = payload?.name?.trim();
     const score = typeof payload?.score === 'number' ? Math.round(payload.score) : NaN;
+    const difficulty = normalizeDifficulty(payload?.difficulty);
 
     if (!name || name.length === 0 || name.length > 64) {
       return json(
@@ -154,6 +160,8 @@ async function submitLeaderboardScore(env: Env, request: Request): Promise<Respo
       );
     }
 
+    const storageKey = encodeLeaderboardKey(name, difficulty);
+
     await env.DB.prepare(
       `INSERT INTO leaderboard (player_name, score, updated_at)
        VALUES (?, ?, CURRENT_TIMESTAMP)
@@ -161,23 +169,19 @@ async function submitLeaderboardScore(env: Env, request: Request): Promise<Respo
          score = CASE WHEN excluded.score > leaderboard.score THEN excluded.score ELSE leaderboard.score END,
          updated_at = CURRENT_TIMESTAMP`
     )
-      .bind(name, score)
+      .bind(storageKey, score)
       .run();
 
     const updated = await env.DB.prepare(
       `SELECT player_name, score, updated_at FROM leaderboard WHERE player_name = ?`
     )
-      .bind(name)
+      .bind(storageKey)
       .first<LeaderboardRow>();
 
     return json({
       ok: true,
       entry: updated
-        ? {
-            playerName: updated.player_name,
-            score: updated.score,
-            updatedAt: updated.updated_at,
-          }
+        ? decodeLeaderboardRow(updated)
         : null,
     });
   } catch (error) {
@@ -272,4 +276,43 @@ function parseExcludeQuery(params: URLSearchParams): number[] {
     .map((part) => Number.parseInt(part, 10))
     .filter((num) => Number.isFinite(num))
     .slice(0, 100);
+}
+
+function normalizeDifficulty(value: string | null | undefined): string {
+  const normalized = (value ?? '').toLowerCase();
+  return ALLOWED_DIFFICULTIES.has(normalized) ? normalized : 'easy';
+}
+
+function difficultyLabelFor(value: string): string {
+  return DIFFICULTY_LABELS[value] ?? value;
+}
+
+function sanitizeName(name: string): string {
+  return name.replace(/::/g, ':').replace(/\s+/g, ' ').trim().slice(0, 64);
+}
+
+function encodeLeaderboardKey(name: string, difficulty: string): string {
+  const safeName = sanitizeName(name);
+  return `${safeName}::${difficulty}`;
+}
+
+function decodeLeaderboardRow(row: LeaderboardRow) {
+  const stored = row.player_name ?? '';
+  const [rawName, rawDifficulty] = stored.includes('::')
+    ? ((): [string, string] => {
+        const parts = stored.split('::');
+        return [parts[0] ?? '', parts[1] ?? 'easy'];
+      })()
+    : [stored, 'easy'];
+
+  const difficulty = normalizeDifficulty(rawDifficulty);
+  const entryName = sanitizeName(rawName);
+
+  return {
+    playerName: entryName || 'Player',
+    difficulty,
+    difficultyLabel: difficultyLabelFor(difficulty),
+    score: row.score,
+    updatedAt: row.updated_at,
+  };
 }

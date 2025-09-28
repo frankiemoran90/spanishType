@@ -27,26 +27,51 @@ document.addEventListener('DOMContentLoaded', () => {
     return trimmed;
   };
 
-  const loadScore = () => {
-    const stored = localStorage.getItem('spanishType.sessionScore');
+  const difficultySettings = {
+    easy: { label: 'Easy', maskRatio: 0, multiplier: 1 },
+    medium: { label: 'Medium', maskRatio: 1 / 3, multiplier: 2 },
+    hard: { label: 'Hard', maskRatio: 2 / 3, multiplier: 3 },
+    impossible: { label: 'Impossible', maskRatio: 1, multiplier: 5 },
+  };
+
+  const difficultyLabelFor = (diff) => difficultySettings[diff]?.label ?? diff;
+
+  const allowedDifficulties = Object.keys(difficultySettings);
+
+  const loadDifficulty = () => {
+    const stored = localStorage.getItem('spanishType.difficulty');
+    if (stored && allowedDifficulties.includes(stored)) {
+      return stored;
+    }
+    return 'easy';
+  };
+
+  const saveDifficulty = (difficulty) => {
+    localStorage.setItem('spanishType.difficulty', difficulty);
+  };
+
+  const storageKey = (base, diff) => `${base}.${diff}`;
+
+  const loadScore = (diff) => {
+    const stored = localStorage.getItem(storageKey('spanishType.sessionScore', diff));
     if (!stored) return 0;
     const value = Number.parseInt(stored, 10);
     return Number.isNaN(value) ? 0 : value;
   };
 
-  const saveScore = (score) => {
-    localStorage.setItem('spanishType.sessionScore', String(score));
+  const saveScore = (score, diff) => {
+    localStorage.setItem(storageKey('spanishType.sessionScore', diff), String(score));
   };
 
-  const loadPersonalBest = () => {
-    const stored = localStorage.getItem('spanishType.personalBest');
+  const loadPersonalBest = (diff) => {
+    const stored = localStorage.getItem(storageKey('spanishType.personalBest', diff));
     if (!stored) return 0;
     const value = Number.parseInt(stored, 10);
     return Number.isNaN(value) ? 0 : value;
   };
 
-  const savePersonalBest = (score) => {
-    localStorage.setItem('spanishType.personalBest', String(score));
+  const savePersonalBest = (score, diff) => {
+    localStorage.setItem(storageKey('spanishType.personalBest', diff), String(score));
   };
 
   root.innerHTML = '';
@@ -154,6 +179,7 @@ document.addEventListener('DOMContentLoaded', () => {
   hiddenInput.autocapitalize = 'none';
   hiddenInput.autocorrect = 'off';
   hiddenInput.spellcheck = false;
+  hiddenInput.inputMode = 'latin';
   hiddenInput.setAttribute('aria-hidden', 'true');
   hiddenInput.style.position = 'absolute';
   hiddenInput.style.opacity = '0';
@@ -232,9 +258,11 @@ document.addEventListener('DOMContentLoaded', () => {
     : window.location.origin;
   const apiBase = window.__SPANISHTYPE_API_BASE__ || defaultBase;
 
+  let difficulty = loadDifficulty();
+
   const playerName = localStorage.getItem('spanishType.playerName') || promptForPlayerName();
   localStorage.setItem('spanishType.playerName', playerName);
-  let sessionScore = loadScore();
+  let sessionScore = loadScore(difficulty);
 
   const scoreboardTitle = document.createElement('h3');
   scoreboardTitle.textContent = 'Scoreboard';
@@ -281,6 +309,35 @@ document.addEventListener('DOMContentLoaded', () => {
   personalBestValueEl.style.color = '#1f2937';
   bestRow.appendChild(personalBestValueEl);
 
+  const difficultyRow = document.createElement('div');
+  difficultyRow.style.display = 'flex';
+  difficultyRow.style.flexDirection = 'column';
+  difficultyRow.style.gap = '0.35rem';
+  difficultyRow.style.marginBottom = '0.75rem';
+  sidebar.appendChild(difficultyRow);
+
+  const difficultyLabel = document.createElement('label');
+  difficultyLabel.textContent = 'Difficulty';
+  difficultyLabel.style.fontSize = '0.85rem';
+  difficultyLabel.style.color = '#374151';
+  difficultyRow.appendChild(difficultyLabel);
+
+  const difficultySelect = document.createElement('select');
+  difficultySelect.style.padding = '0.4rem 0.5rem';
+  difficultySelect.style.borderRadius = '0.5rem';
+  difficultySelect.style.border = '1px solid #d1d5db';
+  difficultySelect.style.background = '#ffffff';
+  difficultySelect.style.fontSize = '0.9rem';
+  difficultySelect.style.color = '#1f2937';
+
+  allowedDifficulties.forEach((key) => {
+    const option = document.createElement('option');
+    option.value = key;
+    option.textContent = `${difficultySettings[key].label} (x${difficultySettings[key].multiplier})`;
+    difficultySelect.appendChild(option);
+  });
+  difficultyRow.appendChild(difficultySelect);
+
   const resetButton = document.createElement('button');
   resetButton.type = 'button';
   resetButton.textContent = 'Reset score';
@@ -293,7 +350,6 @@ document.addEventListener('DOMContentLoaded', () => {
   sidebar.appendChild(resetButton);
 
   const tip = document.createElement('p');
-  tip.textContent = 'Correct character: +1 • Incorrect or missing: −1';
   tip.style.fontSize = '0.85rem';
   tip.style.color = '#4b5563';
   tip.style.marginTop = '1rem';
@@ -330,13 +386,29 @@ document.addEventListener('DOMContentLoaded', () => {
   let enforceAccents = true;
   let hasScoredCurrent = false;
   const usedSentenceIds = new Set();
-  let personalBest = loadPersonalBest();
+  let personalBest = loadPersonalBest(difficulty);
   let handledBackspaceViaBeforeInput = false;
 
   const colors = {
     pending: '#9ca3af',
     correct: '#111827',
     incorrect: '#b91c1c',
+  };
+  const LETTER_REGEX = /[\p{L}\p{M}]/u;
+
+  let maskedIndices = new Set();
+  let scoreMultiplier = difficultySettings[difficulty].multiplier;
+
+  const displayChar = (char) => (char === ' ' ? '\u00A0' : char);
+
+  const revealMaskedSpans = () => {
+    if (!currentSentence) return;
+    charSpans.forEach((span, index) => {
+      if (span.dataset.masked === 'true') {
+        const expectedChar = span.dataset.expected ?? currentSentence.spanish[index] ?? '';
+        span.textContent = displayChar(expectedChar);
+      }
+    });
   };
 
   const focusHiddenInput = () => {
@@ -358,12 +430,20 @@ document.addEventListener('DOMContentLoaded', () => {
       const item = document.createElement('li');
       item.style.display = 'flex';
       item.style.justifyContent = 'space-between';
+      item.style.alignItems = 'center';
       item.style.fontSize = '0.85rem';
       item.style.color = '#1f2937';
       item.style.fontVariantNumeric = 'tabular-nums';
+      item.style.padding = '0.15rem 0.35rem';
+      item.style.borderRadius = '0.45rem';
+      if (entry.difficulty === difficulty) {
+        item.style.background = '#e0f2fe';
+      }
 
       const name = document.createElement('span');
-      name.textContent = entry.playerName ?? entry.player_name ?? 'Unknown';
+      const entryName = entry.playerName ?? entry.player_name ?? 'Unknown';
+      const difficultyLabel = entry.difficultyLabel ?? entry.difficulty ?? '';
+      name.textContent = difficultyLabel ? `${entryName} (${difficultyLabel})` : entryName;
       name.style.fontWeight = index === 0 ? '600' : '500';
 
       const score = document.createElement('span');
@@ -404,7 +484,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const response = await fetch(`${apiBase}/api/leaderboard/submit`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name: playerName, score }),
+        body: JSON.stringify({ name: playerName, score, difficulty }),
       });
 
       if (!response.ok) {
@@ -417,6 +497,63 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   };
 
+  const updateDifficultyUI = () => {
+    const config = difficultySettings[difficulty] ?? difficultySettings.easy;
+    scoreMultiplier = config.multiplier;
+    difficultySelect.value = difficulty;
+    const hiddenPercent = Math.round(config.maskRatio * 100);
+    tip.textContent = `Score multiplier ×${config.multiplier}. Hidden words: ${hiddenPercent}%`;
+    bestLabel.textContent = `Personal best (${config.label})`;
+    personalBestValueEl.textContent = `${personalBest} pts`;
+  };
+
+  const computeMaskedIndices = (sentence) => {
+    const ratio = difficultySettings[difficulty]?.maskRatio ?? 0;
+    if (ratio <= 0) {
+      return new Set();
+    }
+
+    const words = [];
+    let start = null;
+    for (let i = 0; i < sentence.length; i += 1) {
+      const char = sentence[i];
+      if (LETTER_REGEX.test(char)) {
+        if (start === null) start = i;
+      } else if (start !== null) {
+        words.push({ start, end: i });
+        start = null;
+      }
+    }
+    if (start !== null) {
+      words.push({ start, end: sentence.length });
+    }
+
+    if (words.length === 0) {
+      return new Set();
+    }
+
+    const maskCount = Math.max(1, Math.ceil(words.length * ratio));
+    const indices = words.map((_, idx) => idx);
+    for (let i = indices.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [indices[i], indices[j]] = [indices[j], indices[i]];
+    }
+
+    const selected = new Set(indices.slice(0, maskCount));
+    const masked = new Set();
+    selected.forEach((wordIndex) => {
+      const word = words[wordIndex];
+      for (let i = word.start; i < word.end; i += 1) {
+        const char = sentence[i];
+        if (LETTER_REGEX.test(char)) {
+          masked.add(i);
+        }
+      }
+    });
+
+    return masked;
+  };
+
   const updateScoreDisplay = () => {
     scoreValueEl.textContent = `${sessionScore} pts`;
     scoreValueEl.style.color = sessionScore >= 0 ? '#047857' : '#b91c1c';
@@ -424,8 +561,34 @@ document.addEventListener('DOMContentLoaded', () => {
   const updatePersonalBestDisplay = () => {
     personalBestValueEl.textContent = `${personalBest} pts`;
   };
+  difficultySelect.value = difficulty;
   updateScoreDisplay();
   updatePersonalBestDisplay();
+  updateDifficultyUI();
+
+  difficultySelect.addEventListener('change', () => {
+    const newDifficulty = difficultySelect.value;
+    if (!allowedDifficulties.includes(newDifficulty) || newDifficulty === difficulty) {
+      focusHiddenInput();
+      return;
+    }
+
+    difficulty = newDifficulty;
+    saveDifficulty(difficulty);
+    scoreMultiplier = difficultySettings[difficulty].multiplier;
+    sessionScore = loadScore(difficulty);
+    personalBest = loadPersonalBest(difficulty);
+    updateScoreDisplay();
+    updatePersonalBestDisplay();
+    updateDifficultyUI();
+    usedSentenceIds.clear();
+    handledBackspaceViaBeforeInput = false;
+    focusHiddenInput();
+    fetchSentence().catch((error) => {
+      console.error('Failed to fetch sentence', error);
+    });
+    refreshLeaderboard();
+  });
 
   const setLoading = (loading) => {
     isLoading = loading;
@@ -441,6 +604,7 @@ document.addEventListener('DOMContentLoaded', () => {
       charSpans = [];
       charStates = [];
       currentIndex = 0;
+      maskedIndices = new Set();
     } else {
       checkButton.style.opacity = '1';
       skipButton.style.opacity = '1';
@@ -498,15 +662,23 @@ document.addEventListener('DOMContentLoaded', () => {
     charSpans = [];
     charStates = new Array(sentence.length).fill('pending');
     currentIndex = 0;
+    maskedIndices = computeMaskedIndices(sentence);
 
     for (let i = 0; i < sentence.length; i += 1) {
       const char = sentence[i];
       const span = document.createElement('span');
-      span.textContent = char === ' ' ? '\u00A0' : char;
+      const isMasked = maskedIndices.has(i);
+      span.dataset.masked = isMasked ? 'true' : 'false';
       span.dataset.expected = char;
       span.dataset.entered = '';
+      span.dataset.original = char;
       span.style.color = colors.pending;
       span.style.transition = 'color 0.1s ease';
+      if (isMasked) {
+        span.textContent = '*';
+      } else {
+        span.textContent = displayChar(char);
+      }
       spanishDisplay.appendChild(span);
       charSpans.push(span);
     }
@@ -520,14 +692,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const expected = currentSentence.spanish[currentIndex];
     const span = charSpans[currentIndex];
+    const isMasked = span.dataset.masked === 'true';
 
     const normalizedExpected = normalizeForComparison(expected, enforceAccents);
     const normalizedChar = normalizeForComparison(char, enforceAccents);
 
     if (normalizedChar === normalizedExpected) {
+      if (isMasked) {
+        span.textContent = displayChar(expected);
+      }
       span.style.color = colors.correct;
       charStates[currentIndex] = 'correct';
     } else {
+      if (isMasked) {
+        span.textContent = '*';
+      }
       span.style.color = colors.incorrect;
       charStates[currentIndex] = 'incorrect';
     }
@@ -536,6 +715,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     currentIndex += 1;
     updateCursor();
+    handledBackspaceViaBeforeInput = false;
   };
 
   const handleBackspace = () => {
@@ -546,6 +726,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const span = charSpans[currentIndex];
     span.style.color = colors.pending;
     span.dataset.entered = '';
+    if (span.dataset.masked === 'true') {
+      span.textContent = '*';
+    } else {
+      span.textContent = displayChar(span.dataset.expected);
+    }
     charStates[currentIndex] = 'pending';
     updateCursor();
   };
@@ -565,15 +750,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
-      const score = evaluateAnswer();
-      if (typeof score === 'number') {
-        setTimeout(() => {
-          if (!isLoading) {
-            fetchSentence().catch((error) => {
-              console.error('Failed to fetch sentence', error);
-            });
-          }
-        }, 1000);
+      const outcome = evaluateAnswer();
+      if (outcome === 'next') {
+        fetchSentence().catch((error) => {
+          console.error('Failed to fetch sentence', error);
+        });
       }
       return;
     }
@@ -620,9 +801,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const evaluateAnswer = () => {
     if (!currentSentence) return null;
     if (hasScoredCurrent) {
-      feedback.textContent = 'You have already scored this sentence. Fetch a new one to keep going.';
-      feedback.style.color = '#2563eb';
-      return null;
+      return 'next';
     }
 
     const total = charStates.length;
@@ -635,6 +814,9 @@ document.addEventListener('DOMContentLoaded', () => {
         charSpans[i].style.color = colors.incorrect;
         if (!charSpans[i].dataset.entered || charSpans[i].dataset.entered.length === 0) {
           charSpans[i].dataset.entered = '';
+          if (charSpans[i].dataset.masked === 'true') {
+            charSpans[i].textContent = '*';
+          }
         }
       }
       currentIndex = total;
@@ -643,15 +825,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const incorrect = charStates.filter((state) => state === 'incorrect').length;
     const correct = charStates.filter((state) => state === 'correct').length;
-    const sentenceScore = correct - incorrect;
+    const sentenceScoreRaw = correct - incorrect;
+    const sentenceScore = sentenceScoreRaw * scoreMultiplier;
     sessionScore += sentenceScore;
-    saveScore(sessionScore);
+    saveScore(sessionScore, difficulty);
     updateScoreDisplay();
     hasScoredCurrent = true;
+    revealMaskedSpans();
 
     if (sessionScore > personalBest) {
       personalBest = sessionScore;
-      savePersonalBest(personalBest);
+      savePersonalBest(personalBest, difficulty);
       updatePersonalBestDisplay();
       submitLeaderboardScore(personalBest);
     }
@@ -665,15 +849,18 @@ document.addEventListener('DOMContentLoaded', () => {
       feedback.style.color = '#b91c1c';
     }
 
+    feedback.textContent += ' Press Enter or Check again for a new sentence.';
+
     focusHiddenInput();
 
-    return sentenceScore;
+    return 'scored';
   };
 
   const fetchSentence = async () => {
     if (isLoading) return;
     setLoading(true);
     hasScoredCurrent = false;
+    handledBackspaceViaBeforeInput = false;
 
     try {
       const excludeParam = Array.from(usedSentenceIds).slice(-100).join(',');
@@ -724,15 +911,11 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   checkButton.addEventListener('click', () => {
-    const score = evaluateAnswer();
-    if (typeof score === 'number') {
-      setTimeout(() => {
-        if (!isLoading) {
-          fetchSentence().catch((error) => {
-            console.error('Failed to fetch sentence', error);
-          });
-        }
-      }, 1000);
+    const outcome = evaluateAnswer();
+    if (outcome === 'next') {
+      fetchSentence().catch((error) => {
+        console.error('Failed to fetch sentence', error);
+      });
     }
   });
   skipButton.addEventListener('click', () => {
@@ -770,7 +953,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   resetButton.addEventListener('click', () => {
     sessionScore = 0;
-    saveScore(sessionScore);
+    saveScore(sessionScore, difficulty);
     updateScoreDisplay();
     feedback.textContent = 'Score reset for this session.';
     feedback.style.color = '#2563eb';
